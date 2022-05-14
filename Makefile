@@ -74,6 +74,10 @@ hello: hal ucx
 	$(CC) $(CFLAGS) -o hello.o app/hello.c
 	@$(MAKE) --no-print-directory link
 
+edf_test: hal ucx
+	$(CC) $(CFLAGS) -o edf_test.o app/edf_test.c
+	@$(MAKE) --no-print-directory link
+
 hello_p: hal ucx
 	$(CC) $(CFLAGS) -o hello_preempt.o app/hello_preempt.c
 	@$(MAKE) --no-print-directory link

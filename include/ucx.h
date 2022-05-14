@@ -29,6 +29,12 @@ struct tcb_s {
 	uint16_t delay;
 	uint16_t priority;
 	uint8_t state;
+    uint16_t period;
+    uint16_t remaining_period_ticks;
+    uint16_t capacity;
+    uint16_t remaining_capacity_ticks;
+    uint16_t deadline;
+    uint16_t remaining_deadline_ticks;
 };
 
 /* kernel control block */
@@ -41,6 +47,7 @@ struct kcb_s {
 
 /* kernel base API */
 int32_t ucx_task_add(void *task, uint16_t guard_size);
+int32_t ucx_task_add_periodic(void *task, uint16_t period, uint16_t capacity, uint16_t deadline, uint16_t guard_size);
 void ucx_task_init();
 void ucx_task_yield();
 void ucx_task_delay(uint16_t ticks);

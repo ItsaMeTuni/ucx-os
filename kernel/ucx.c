@@ -8,6 +8,9 @@
 
 struct kcb_s kernel_state;
 struct kcb_s *kcb_p = &kernel_state;
+uint16_t task_count = 0;
+uint32_t dispatch_count = 0;
+uint16_t idle_task_id;
 
 /* kernel auxiliary functions */
 
@@ -66,12 +69,81 @@ uint16_t krnl_schedule(void)
 	return kcb_p->tcb_p->id;
 }
 
+uint16_t krnl_rt_schedule() {
+    // Tick period and deadline for all tasks
+    for(uint16_t i = 0; i < task_count; i++) {
+        kcb_p->tcb_p->remaining_period_ticks--;
+        kcb_p->tcb_p->remaining_deadline_ticks--;
+
+        if(kcb_p->tcb_p->remaining_period_ticks <= 0) {
+            kcb_p->tcb_p->remaining_period_ticks = kcb_p->tcb_p->period;
+            kcb_p->tcb_p->remaining_deadline_ticks = kcb_p->tcb_p->deadline;
+            kcb_p->tcb_p->remaining_capacity_ticks = kcb_p->tcb_p->capacity;
+        }
+
+        if(kcb_p->tcb_p->remaining_deadline_ticks <= 0) {
+            // Deadline miss, "drop" task
+            kcb_p->tcb_p->remaining_capacity_ticks = 0;
+        }
+
+        kcb_p->tcb_p = kcb_p->tcb_p->tcb_next;
+    }
+
+    // After the previous loop, kcb_p->tcb_p is the currently
+    // running task (i.e. the task that just executed and was
+    // preempted)
+
+    // Decrement capacity of current task
+    // and set it to READY
+    if (kcb_p->tcb_p->state == TASK_RUNNING) {
+        kcb_p->tcb_p->remaining_capacity_ticks--;
+        kcb_p->tcb_p->state = TASK_READY;
+    }
+
+    // Start at current task instead of starting at the first task
+    // in the list so that if multiple tasks have the same priority
+    // (deadline occurs at the same time), they are executed in
+    // round-robin fashion.
+    uint16_t earliest_deadline = kcb_p->tcb_p->remaining_deadline_ticks;
+    uint16_t earliest_deadline_task_id = kcb_p->tcb_p->id;
+    for(uint16_t i = 0; i < task_count - 1; i++) {
+        kcb_p->tcb_p = kcb_p->tcb_p->tcb_next;
+
+        // Ignore done tasks or tasks that missed their deadline
+        if(kcb_p->tcb_p->remaining_capacity_ticks <= 0) {
+            continue;
+        }
+
+        if (kcb_p->tcb_p->remaining_deadline_ticks < earliest_deadline) {
+            earliest_deadline = kcb_p->tcb_p->remaining_deadline_ticks;
+            earliest_deadline_task_id = kcb_p->tcb_p->id;
+        }
+    }
+
+    // set current task to the task with the earliest deadline
+    for(uint16_t i = 0; i < task_count; i++) {
+        if(kcb_p->tcb_p->id == earliest_deadline_task_id) {
+            break;
+        }
+
+        kcb_p->tcb_p = kcb_p->tcb_p->tcb_next;
+    }
+
+    printf("%d/", kcb_p->tcb_p->id);
+
+    kcb_p->tcb_p->state = TASK_RUNNING;
+    kcb_p->ctx_switches++;
+
+    return kcb_p->tcb_p->id;
+}
+
 void krnl_dispatcher(void)
 {
+    printf("|%d|", dispatch_count++);
 	if (!setjmp(kcb_p->tcb_p->context)) {
 		krnl_delay_update();
 		krnl_guard_check();
-		krnl_schedule();
+        krnl_rt_schedule();
 		_interrupt_tick();
 		longjmp(kcb_p->tcb_p->context, 1);
 	}
@@ -100,8 +172,25 @@ int32_t ucx_task_add(void *task, uint16_t guard_size)
 	kcb_p->tcb_p->id = kcb_p->id++;
 	kcb_p->tcb_p->state = TASK_STOPPED;
 	kcb_p->tcb_p->priority = TASK_NORMAL_PRIO;
+
+    task_count++;
 	
 	return 0;
+}
+
+int32_t ucx_task_add_periodic(void *task, uint16_t period, uint16_t capacity, uint16_t deadline, uint16_t guard_size) {
+    if(ucx_task_add(task, guard_size)) {
+        return -1;
+    }
+
+    kcb_p->tcb_p->period = period;
+    kcb_p->tcb_p->remaining_period_ticks = period;
+    kcb_p->tcb_p->capacity = capacity;
+    kcb_p->tcb_p->remaining_capacity_ticks = capacity;
+    kcb_p->tcb_p->deadline = deadline;
+    kcb_p->tcb_p->remaining_deadline_ticks = deadline;
+
+    return 0;
 }
 
 /*
@@ -260,7 +349,7 @@ void ucx_task_wfi()
 
 uint16_t ucx_task_count()
 {
-	return kcb_p->id + 1;
+	return task_count;
 }
 
 void ucx_critical_enter()
@@ -275,6 +364,10 @@ void ucx_critical_leave()
 
 
 /* main() function, called from the C runtime */
+
+void idle(void) {
+    for(;;){}
+}
 
 int32_t main(void)
 {
@@ -295,6 +388,9 @@ int32_t main(void)
 	ucx_heap_init((size_t *)&_heap, UCX_OS_HEAP_SIZE);
 	printf("heap_init(), %d bytes free\n", UCX_OS_HEAP_SIZE);
 #endif
+//    ucx_task_add(idle, 10);
+//    idle_task_id = kcb_p->tcp_p->id;
+
 	pr = app_main();
 	krnl_sched_init(pr);
 	
