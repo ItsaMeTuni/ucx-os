@@ -29,6 +29,7 @@ struct tcb_s {
 	uint16_t delay;
 	uint16_t priority;
 	uint8_t state;
+    uint8_t is_periodic;
     uint16_t period;
     uint16_t remaining_period_ticks;
     uint16_t capacity;

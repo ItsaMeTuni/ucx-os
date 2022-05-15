@@ -10,7 +10,6 @@ struct kcb_s kernel_state;
 struct kcb_s *kcb_p = &kernel_state;
 uint16_t task_count = 0;
 uint32_t dispatch_count = 0;
-uint16_t idle_task_id;
 
 /* kernel auxiliary functions */
 
@@ -55,91 +54,139 @@ static void krnl_sched_init(int32_t preemptive)
 
 uint16_t krnl_schedule(void)
 {
-	if (kcb_p->tcb_p->state == TASK_RUNNING)
-		kcb_p->tcb_p->state = TASK_READY;
 	do {
 		do {
 			kcb_p->tcb_p = kcb_p->tcb_p->tcb_next;
-		} while (kcb_p->tcb_p->state != TASK_READY);
+		} while (kcb_p->tcb_p->state != TASK_READY || kcb_p->tcb_p->is_periodic);
 	} while (--kcb_p->tcb_p->priority & 0xff);
 	kcb_p->tcb_p->priority |= (kcb_p->tcb_p->priority >> 8) & 0xff;
-	kcb_p->tcb_p->state = TASK_RUNNING;
-	kcb_p->ctx_switches++;
-	
-	return kcb_p->tcb_p->id;
+
+    return kcb_p->tcb_p->id;
 }
 
-uint16_t krnl_rt_schedule() {
-    // Tick period and deadline for all tasks
+// Set current task to READY
+// Consume current task's capacity if it is periodic
+// Tick period and deadline for all
+// For tasks with remaining period <= 0
+//      reset remaining period
+//      reset remaining capacity
+//      reset remaining deadline
+// For tasks with deadline <= 0
+//      set capacity = 0
+// Find periodic task with remaining capacity and earliest deadline
+// If found, select for execution
+// If not
+//      find non-periodic with the highest priority
+//      select for execution
+
+void tick_period_and_deadline() {
     for(uint16_t i = 0; i < task_count; i++) {
+        kcb_p->tcb_p = kcb_p->tcb_p->tcb_next;
+
+        if(!kcb_p->tcb_p->is_periodic) {
+            continue;
+        }
+
         kcb_p->tcb_p->remaining_period_ticks--;
         kcb_p->tcb_p->remaining_deadline_ticks--;
+    }
+}
+
+void handle_period_resets() {
+    for(uint16_t i = 0; i < task_count; i++) {
+        kcb_p->tcb_p = kcb_p->tcb_p->tcb_next;
+
+        if(!kcb_p->tcb_p->is_periodic) {
+            continue;
+        }
 
         if(kcb_p->tcb_p->remaining_period_ticks <= 0) {
             kcb_p->tcb_p->remaining_period_ticks = kcb_p->tcb_p->period;
             kcb_p->tcb_p->remaining_deadline_ticks = kcb_p->tcb_p->deadline;
             kcb_p->tcb_p->remaining_capacity_ticks = kcb_p->tcb_p->capacity;
         }
+    }
+}
 
-        if(kcb_p->tcb_p->remaining_deadline_ticks <= 0) {
-            // Deadline miss, "drop" task
-            kcb_p->tcb_p->remaining_capacity_ticks = 0;
+void drop_tasks_with_missed_deadlines() {
+    for(uint16_t i = 0; i < task_count; i++) {
+        kcb_p->tcb_p = kcb_p->tcb_p->tcb_next;
+
+        if(!kcb_p->tcb_p->is_periodic) {
+            continue;
         }
 
-        kcb_p->tcb_p = kcb_p->tcb_p->tcb_next;
+        if(kcb_p->tcb_p->remaining_deadline_ticks <= 0) {
+            kcb_p->tcb_p->remaining_capacity_ticks = 0;
+        }
     }
+}
 
-    // After the previous loop, kcb_p->tcb_p is the currently
-    // running task (i.e. the task that just executed and was
-    // preempted)
+uint16_t find_next_periodic_task(struct tcb_s *last_task) {
+    kcb_p->tcb_p = last_task;
 
-    // Decrement capacity of current task
-    // and set it to READY
-    if (kcb_p->tcb_p->state == TASK_RUNNING) {
-        kcb_p->tcb_p->remaining_capacity_ticks--;
-        kcb_p->tcb_p->state = TASK_READY;
-    }
+    uint16_t earliest_deadline = 0xffff;
+    uint16_t task_id = -1;
 
-    // Start at current task instead of starting at the first task
-    // in the list so that if multiple tasks have the same priority
-    // (deadline occurs at the same time), they are executed in
-    // round-robin fashion.
-    uint16_t earliest_deadline = kcb_p->tcb_p->remaining_deadline_ticks;
-    uint16_t earliest_deadline_task_id = kcb_p->tcb_p->id;
-    for(uint16_t i = 0; i < task_count - 1; i++) {
+    for(uint16_t i = 0; i < task_count; i++) {
         kcb_p->tcb_p = kcb_p->tcb_p->tcb_next;
 
-        // Ignore done tasks or tasks that missed their deadline
+        if(!kcb_p->tcb_p->is_periodic) {
+            continue;
+        }
+
         if(kcb_p->tcb_p->remaining_capacity_ticks <= 0) {
             continue;
         }
 
-        if (kcb_p->tcb_p->remaining_deadline_ticks < earliest_deadline) {
+        if(kcb_p->tcb_p->remaining_deadline_ticks < earliest_deadline) {
             earliest_deadline = kcb_p->tcb_p->remaining_deadline_ticks;
-            earliest_deadline_task_id = kcb_p->tcb_p->id;
+            task_id = kcb_p->tcb_p->id;
         }
     }
 
-    // set current task to the task with the earliest deadline
+    return task_id;
+}
+
+uint16_t krnl_rt_schedule() {
+    struct tcb_s *preempted_task = kcb_p->tcb_p;
+
+    if (kcb_p->tcb_p->state == TASK_RUNNING) {
+        kcb_p->tcb_p->state = TASK_READY;
+
+        if (kcb_p->tcb_p->is_periodic) {
+            kcb_p->tcb_p->remaining_capacity_ticks--;
+        }
+    }
+
+    tick_period_and_deadline();
+    handle_period_resets();
+    drop_tasks_with_missed_deadlines();
+
+    uint16_t next_task_id = find_next_periodic_task(preempted_task);
+    if(next_task_id == (uint16_t)-1) {
+        next_task_id = krnl_schedule();
+    }
+
     for(uint16_t i = 0; i < task_count; i++) {
-        if(kcb_p->tcb_p->id == earliest_deadline_task_id) {
+        kcb_p->tcb_p = kcb_p->tcb_p->tcb_next;
+
+        if (kcb_p->tcb_p->id == next_task_id) {
             break;
         }
-
-        kcb_p->tcb_p = kcb_p->tcb_p->tcb_next;
     }
-
-    printf("%d/", kcb_p->tcb_p->id);
 
     kcb_p->tcb_p->state = TASK_RUNNING;
     kcb_p->ctx_switches++;
 
-    return kcb_p->tcb_p->id;
+    printf("(%d)%d\n", kcb_p->ctx_switches, next_task_id);
+
+    return next_task_id;
 }
 
 void krnl_dispatcher(void)
 {
-    printf("|%d|", dispatch_count++);
+//    printf("|%d|", dispatch_count++);
 	if (!setjmp(kcb_p->tcb_p->context)) {
 		krnl_delay_update();
 		krnl_guard_check();
@@ -172,6 +219,7 @@ int32_t ucx_task_add(void *task, uint16_t guard_size)
 	kcb_p->tcb_p->id = kcb_p->id++;
 	kcb_p->tcb_p->state = TASK_STOPPED;
 	kcb_p->tcb_p->priority = TASK_NORMAL_PRIO;
+    kcb_p->tcb_p->is_periodic = 0;
 
     task_count++;
 	
@@ -189,6 +237,7 @@ int32_t ucx_task_add_periodic(void *task, uint16_t period, uint16_t capacity, ui
     kcb_p->tcb_p->remaining_capacity_ticks = capacity;
     kcb_p->tcb_p->deadline = deadline;
     kcb_p->tcb_p->remaining_deadline_ticks = deadline;
+    kcb_p->tcb_p->is_periodic = 1;
 
     return 0;
 }
@@ -224,8 +273,8 @@ void ucx_task_init(void)
 	memset(guard, 0x33, 4);
 	memset((guard) + kcb_p->tcb_p->guard_sz - 4, 0x33, 4);
 	kcb_p->tcb_p->guard_addr = (uint32_t *)guard;
-	printf("task %d, guard: %08x - %08x\n", kcb_p->tcb_p->id, (size_t)kcb_p->tcb_p->guard_addr,
-		(size_t)kcb_p->tcb_p->guard_addr + kcb_p->tcb_p->guard_sz);
+	//printf("task %d, guard: %08x - %08x\n", kcb_p->tcb_p->id, (size_t)kcb_p->tcb_p->guard_addr,
+	//	(size_t)kcb_p->tcb_p->guard_addr + kcb_p->tcb_p->guard_sz);
 	
 	if (!setjmp(kcb_p->tcb_p->context)) {
 		kcb_p->tcb_p->state = TASK_READY;
@@ -366,6 +415,7 @@ void ucx_critical_leave()
 /* main() function, called from the C runtime */
 
 void idle(void) {
+    ucx_task_init();
     for(;;){}
 }
 
@@ -388,10 +438,26 @@ int32_t main(void)
 	ucx_heap_init((size_t *)&_heap, UCX_OS_HEAP_SIZE);
 	printf("heap_init(), %d bytes free\n", UCX_OS_HEAP_SIZE);
 #endif
-//    ucx_task_add(idle, 10);
-//    idle_task_id = kcb_p->tcp_p->id;
+    printf("x\n");
+
 
 	pr = app_main();
+
+    uint8_t has_aperiodic = 0;
+    for(uint16_t i = 0; i < task_count; i++) {
+        if(!kcb_p->tcb_p->is_periodic) {
+            has_aperiodic = 1;
+        }
+
+        kcb_p->tcb_p = kcb_p->tcb_p->tcb_next;
+    }
+
+    if(!has_aperiodic) {
+        ucx_task_add(idle, DEFAULT_GUARD_SIZE);
+        ucx_task_priority(kcb_p->tcb_p->id, TASK_IDLE_PRIO);
+    }
+
+
 	krnl_sched_init(pr);
 	
 	return 0;
