@@ -29,14 +29,14 @@ struct tcb_s {
 	uint16_t delay;
 	uint16_t priority;
 	uint8_t state;
-    uint8_t is_periodic;
-    uint16_t period;
-    uint16_t remaining_period_ticks;
-    uint16_t capacity;
-    uint16_t remaining_capacity_ticks;
-    uint16_t deadline;
-    uint16_t remaining_deadline_ticks;
-    uint8_t has_run_in_lcm;
+	uint8_t is_periodic;
+	uint16_t period;
+	uint16_t remaining_period_ticks;
+	uint16_t capacity;
+	uint16_t remaining_capacity_ticks;
+	uint16_t deadline;
+	uint16_t remaining_deadline_ticks;
+	uint8_t has_run_in_lcm;
 };
 
 /* kernel control block */
@@ -45,9 +45,9 @@ struct kcb_s {
 	struct tcb_s *tcb_first;
 	volatile uint32_t ctx_switches;
 	uint16_t id;
-    uint16_t deadline_misses;
-    uint16_t periods_least_common_multiple;
-    uint16_t ticks_until_next_report;
+	uint16_t deadline_misses;
+	uint16_t periods_least_common_multiple;
+	uint16_t ticks_until_next_report;
 };
 
 /* kernel base API */
