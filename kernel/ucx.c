@@ -223,6 +223,14 @@ uint16_t krnl_rt_schedule() {
 
 #ifdef SCHEDULER_DEBUG
 	printf("%d\n", next_task_id);
+#else
+	preempted_task->continuous_capacity_consumed++;
+	if(kcb_p->tcb_p != preempted_task) {
+		printf("Task consumed %d capacity units\n",  preempted_task->continuous_capacity_consumed);
+		preempted_task->continuous_capacity_consumed = 0;
+
+		printf("Running task %d\n", kcb_p->tcb_p->id);
+	}
 #endif
 	return next_task_id;
 }
@@ -247,8 +255,9 @@ int32_t ucx_task_add(void *task, uint16_t guard_size)
 	struct tcb_s *tcb_last = kcb_p->tcb_p;
 	
 	kcb_p->tcb_p = (struct tcb_s *)malloc(sizeof(struct tcb_s));
-	if (kcb_p->tcb_first == 0)
+	if (kcb_p->tcb_first == 0) {
 		kcb_p->tcb_first = kcb_p->tcb_p;
+	}
 
 	if (!kcb_p->tcb_p)
 		return -1;
@@ -264,6 +273,7 @@ int32_t ucx_task_add(void *task, uint16_t guard_size)
 	kcb_p->tcb_p->priority = TASK_NORMAL_PRIO;
 	kcb_p->tcb_p->is_periodic = 0;
 	kcb_p->tcb_p->has_run_in_lcm = 0;
+	kcb_p->tcb_p->continuous_capacity_consumed = 0;
 
 
 	task_count++;

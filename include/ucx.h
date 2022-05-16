@@ -37,6 +37,7 @@ struct tcb_s {
 	uint16_t deadline;
 	uint16_t remaining_deadline_ticks;
 	uint8_t has_run_in_lcm;
+	uint16_t continuous_capacity_consumed;
 };
 
 /* kernel control block */

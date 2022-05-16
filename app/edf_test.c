@@ -24,6 +24,7 @@ int32_t app_main(void)
 //    ucx_task_add(task, DEFAULT_GUARD_SIZE);
 //    ucx_task_add(task, DEFAULT_GUARD_SIZE);
 //    ucx_task_add(task, DEFAULT_GUARD_SIZE);
+//	ucx_task_priority(ucx_task_id(), TASK_CRIT_PRIO);
 
 
 	// Task group 2
