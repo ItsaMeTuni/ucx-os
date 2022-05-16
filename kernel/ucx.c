@@ -116,8 +116,14 @@ void drop_tasks_with_missed_deadlines() {
             continue;
         }
 
+        if(kcb_p->tcb_p->remaining_capacity_ticks <= 0) {
+            continue;
+        }
+
         if(kcb_p->tcb_p->remaining_deadline_ticks <= 0) {
+            printf("dm:%d\n", kcb_p->tcb_p->id);
             kcb_p->tcb_p->remaining_capacity_ticks = 0;
+            kcb_p->deadline_misses++;
         }
     }
 }
@@ -148,8 +154,43 @@ uint16_t find_next_periodic_task(struct tcb_s *last_task) {
     return task_id;
 }
 
+void print_report() {
+    uint16_t tasks_run = 0;
+    for(uint16_t i = 0; i < task_count; i++) {
+        kcb_p->tcb_p = kcb_p->tcb_p->tcb_next;
+
+        if (kcb_p->tcb_p->has_run_in_lcm) {
+            tasks_run++;
+        }
+    }
+
+    printf("=================================================\n");
+    printf("Report:\n");
+    printf("Deadline misses: %d\n", kcb_p->deadline_misses);
+    printf("Jobs run: %d\n", tasks_run);
+    printf("=================================================\n");
+}
+
+void run_statistics_stuff() {
+    if(kcb_p->ticks_until_next_report <= 0) {
+        print_report();
+
+        kcb_p->ticks_until_next_report = kcb_p->periods_least_common_multiple;
+        kcb_p->deadline_misses = 0;
+        for(uint16_t i = 0; i < task_count; i++) {
+            kcb_p->tcb_p = kcb_p->tcb_p->tcb_next;
+            kcb_p->tcb_p->has_run_in_lcm = 0;
+        }
+    }
+    kcb_p->ticks_until_next_report--;
+}
+
 uint16_t krnl_rt_schedule() {
     struct tcb_s *preempted_task = kcb_p->tcb_p;
+
+#ifndef SCHEDULER_DEBUG
+    run_statistics_stuff();
+#endif
 
     if (kcb_p->tcb_p->state == TASK_RUNNING) {
         kcb_p->tcb_p->state = TASK_READY;
@@ -177,10 +218,12 @@ uint16_t krnl_rt_schedule() {
     }
 
     kcb_p->tcb_p->state = TASK_RUNNING;
+    kcb_p->tcb_p->has_run_in_lcm = 1;
     kcb_p->ctx_switches++;
 
+#ifdef SCHEDULER_DEBUG
     printf("%d\n", next_task_id);
-
+#endif
     return next_task_id;
 }
 
@@ -220,6 +263,8 @@ int32_t ucx_task_add(void *task, uint16_t guard_size)
 	kcb_p->tcb_p->state = TASK_STOPPED;
 	kcb_p->tcb_p->priority = TASK_NORMAL_PRIO;
     kcb_p->tcb_p->is_periodic = 0;
+    kcb_p->tcb_p->has_run_in_lcm = 0;
+
 
     task_count++;
 	
@@ -419,6 +464,42 @@ void idle(void) {
     for(;;){}
 }
 
+void calculate_periods_lcm() {
+
+    uint16_t longest_period = 0;
+    for(uint16_t i = 0; i < task_count; i++) {
+        kcb_p->tcb_p = kcb_p->tcb_p->tcb_next;
+
+        if(!kcb_p->tcb_p->is_periodic) {
+            continue;
+        }
+
+        if(kcb_p->tcb_p->period > longest_period) {
+            longest_period = kcb_p->tcb_p->period;
+        }
+    }
+
+    uint16_t lcm = longest_period;
+    uint8_t found_lcm = 1;
+    do {
+        found_lcm = 1;
+        for(uint16_t i = 0; i < task_count; i++) {
+            kcb_p->tcb_p = kcb_p->tcb_p->tcb_next;
+
+            if(!kcb_p->tcb_p->is_periodic) {
+                continue;
+            }
+
+            if(lcm % kcb_p->tcb_p->period != 0) {
+                found_lcm = 0;
+                lcm++;
+            }
+        }
+    } while(!found_lcm);
+
+    kcb_p->periods_least_common_multiple = lcm;
+}
+
 int32_t main(void)
 {
 	int32_t pr;
@@ -457,6 +538,8 @@ int32_t main(void)
         ucx_task_priority(kcb_p->tcb_p->id, TASK_IDLE_PRIO);
     }
 
+    calculate_periods_lcm();
+    kcb_p->ticks_until_next_report = kcb_p->periods_least_common_multiple;
 
 	krnl_sched_init(pr);
 	
