@@ -179,7 +179,7 @@ uint16_t krnl_rt_schedule() {
     kcb_p->tcb_p->state = TASK_RUNNING;
     kcb_p->ctx_switches++;
 
-    printf("(%d)%d\n", kcb_p->ctx_switches, next_task_id);
+    printf("%d\n", next_task_id);
 
     return next_task_id;
 }
