@@ -48,6 +48,17 @@ ucx:
 		$(SRC_DIR)/kernel/semaphore.c \
 		$(SRC_DIR)/kernel/ucx.c
 
+ucx_debug:
+	$(CC) $(CFLAGS) -DSCHEDULER_DEBUG=1 \
+		$(SRC_DIR)/lib/libc.c \
+		$(SRC_DIR)/lib/dump.c \
+		$(SRC_DIR)/lib/malloc.c \
+		$(SRC_DIR)/lib/list.c \
+		$(SRC_DIR)/lib/queue.c \
+		$(SRC_DIR)/kernel/pipe.c \
+		$(SRC_DIR)/kernel/semaphore.c \
+		$(SRC_DIR)/kernel/ucx.c
+
 ## kernel + application link
 link:
 ifeq ('$(ARCH)', 'avr/atmega328p')
@@ -72,6 +83,14 @@ delay: hal ucx
 
 hello: hal ucx
 	$(CC) $(CFLAGS) -o hello.o app/hello.c
+	@$(MAKE) --no-print-directory link
+
+edf_test: hal ucx
+	$(CC) $(CFLAGS) -o edf_test.o app/edf_test.c
+	@$(MAKE) --no-print-directory link
+
+edf_test_debug: hal ucx_debug
+	$(CC) $(CFLAGS) -o edf_test.o app/edf_test.c
 	@$(MAKE) --no-print-directory link
 
 hello_p: hal ucx
